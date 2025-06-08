@@ -1,35 +1,49 @@
-from datetime import date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import CurrencyRate
+from datetime import date
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def get_rates_by_date(session: AsyncSession, target_date: date):
-    """Получение курсов валют за указанную дату"""
     result = await session.execute(
-        select(CurrencyRate)
-        .where(CurrencyRate.date == target_date)
+        select(CurrencyRate).where(CurrencyRate.date == target_date)
     )
     return result.scalars().all()
 
 
-async def save_rates(session: AsyncSession, rates: list[dict]):
-    """Сохранение списка курсов в БД с правильной обработкой транзакций"""
-    try:
-        for rate_data in rates:
-            # Создание объекта модели из словаря данных
-            rate_obj = CurrencyRate(
-                date=rate_data['date'],
-                currency_code=rate_data['currency_code'],
-                name=rate_data['name'],
-                rate=rate_data['rate'],
-                nominal=rate_data['nominal']
-            )
-            session.add(rate_obj)
+async def save_rates(session: AsyncSession, rates: list):
+    if not rates:
+        logger.warning("No rates to save")
+        return 0
 
-        # Атомарное сохранение всех изменений
+    saved_count = 0
+    for rate in rates:
+        try:
+            # Используем merge вместо insert для обработки конфликтов
+            stmt = select(CurrencyRate).where(
+                CurrencyRate.date == rate['date'],
+                CurrencyRate.currency_code == rate['currency_code']
+            )
+            existing = await session.execute(stmt)
+            if existing.scalar_one_or_none() is None:
+                currency_rate = CurrencyRate(
+                    date=rate['date'],
+                    currency_code=rate['currency_code'],
+                    name=rate['name'],
+                    rate=rate['rate'],
+                    nominal=rate['nominal']
+                )
+                session.add(currency_rate)
+                saved_count += 1
+        except Exception as e:
+            logger.error(f"Error saving rate for {rate['currency_code']}: {str(e)}")
+            continue
+
+    if saved_count > 0:
         await session.commit()
-    except Exception as e:
-        # Откат транзакции при ошибке
-        await session.rollback()
-        raise e
+        logger.info(f"Saved {saved_count} new currency rates")
+
+    return saved_count

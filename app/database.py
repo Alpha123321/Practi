@@ -1,26 +1,25 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from app.models import Base
 import os
-from dotenv import load_dotenv  # Импортируем функцию загрузки
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
+import logging
 
-# Загружаем переменные из .env
+logger = logging.getLogger(__name__)
 load_dotenv()
 
-# Получаем строку подключения
 DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_async_engine(DATABASE_URL, future=True, echo=False)
+AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+Base = declarative_base()
 
-# Создаем асинхронный движок для работы с PostgreSQL
-engine = create_async_engine(DATABASE_URL)
-
-# Настраиваем фабрику сессий
-async_session = sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+async def get_db() -> AsyncSession:
+    async with AsyncSessionLocal() as session:
+        yield session
 
 async def init_db():
-    """Инициализация базы данных - создание таблиц"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database initialized")
+
+async def shutdown_db():
+    await engine.dispose()
