@@ -1,6 +1,7 @@
 
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from datetime import date
 import logging
 import traceback
@@ -86,4 +87,8 @@ async def get_exchange_rates(db: AsyncSession = Depends(get_db)):
             detail=f"Internal Server Error: {str(e)}"
         )
 
+@app.post("/pull")
+async def pullHandle():
+    logger.info("Кто-то дернул ручку!")
+    return {"message": "Ручка дёрнута!"}
 #BD - MyStrngPsswrd1

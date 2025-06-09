@@ -1,5 +1,5 @@
 #import datetime
-from datetime import date, datetime
+import datetime
 
 import aiohttp
 from lxml import etree
@@ -7,7 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def fetch_cbr_rates(target_date: date) -> list:
+async def fetch_cbr_rates(target_date: datetime.date) -> list:
     url = f"https://www.cbr.ru/scripts/XML_daily.asp?date_req={target_date.strftime('%d/%m/%Y')}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
@@ -22,7 +22,7 @@ async def fetch_cbr_rates(target_date: date) -> list:
         raise
 
 
-def parse_xml(xml_content: bytes, target_date: date) -> list:
+def parse_xml(xml_content: bytes, target_date: datetime.date) -> list:
     try:
         parser = etree.XMLParser(encoding='windows-1251')
         root = etree.fromstring(xml_content, parser=parser)

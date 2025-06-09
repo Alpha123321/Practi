@@ -15,35 +15,36 @@ async def get_rates_by_date(session: AsyncSession, target_date: date):
 
 
 async def save_rates(session: AsyncSession, rates: list):
+    """Сохраняет курсы валют в базу данных"""
     if not rates:
-        logger.warning("No rates to save")
         return 0
 
-    saved_count = 0
+    # Привести данные к нужному формату
+    currency_data = []
     for rate in rates:
-        try:
-            # Используем merge вместо insert для обработки конфликтов
-            stmt = select(CurrencyRate).where(
-                CurrencyRate.date == rate['date'],
-                CurrencyRate.currency_code == rate['currency_code']
-            )
-            existing = await session.execute(stmt)
-            if existing.scalar_one_or_none() is None:
-                currency_rate = CurrencyRate(
+        # Проверить, существует ли запись
+        stmt = select(CurrencyRate).where(
+            CurrencyRate.date == rate['date'],
+            CurrencyRate.currency_code == rate['currency_code']
+        )
+        result = await session.execute(stmt)
+        existing = result.scalar()
+
+        if not existing:
+            # Добавить новую запись
+            currency_data.append(
+                CurrencyRate(
                     date=rate['date'],
                     currency_code=rate['currency_code'],
                     name=rate['name'],
                     rate=rate['rate'],
                     nominal=rate['nominal']
                 )
-                session.add(currency_rate)
-                saved_count += 1
-        except Exception as e:
-            logger.error(f"Error saving rate for {rate['currency_code']}: {str(e)}")
-            continue
+            )
 
-    if saved_count > 0:
+    # Вставляем все новые записи
+    if currency_data:
+        session.add_all(currency_data)
         await session.commit()
-        logger.info(f"Saved {saved_count} new currency rates")
 
-    return saved_count
+    return len(currency_data)
