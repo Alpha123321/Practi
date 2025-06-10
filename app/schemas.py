@@ -18,3 +18,4 @@ class CurrencyRateSchema(BaseModel):
 
     class Config:
         from_attributes = True
+

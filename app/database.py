@@ -4,32 +4,50 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 import logging
 
-logger = logging.getLogger(__name__)
+# Загрузка переменных из .env
 load_dotenv()
 
+# Логгер
+logger = logging.getLogger("database")
+
+# Получение DATABASE_URL из .env
 DATABASE_URL = os.getenv("DATABASE_URL")
-# Создаем асинхронный движок
-engine = create_async_engine(DATABASE_URL, future=True, echo=False)
-# Создаем фабрику сессий
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+# Создание движка базы данных
+engine = create_async_engine(DATABASE_URL)
+
+# Создание фабрики сессий
+AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+# Базовый класс для моделей
 Base = declarative_base()
 
-#проверка на наличие url
-print(f"DATABASE_URL: {DATABASE_URL}")
+async def get_db():
+    """Генератор сессий для работы с базой данных."""
+    async with AsyncSessionLocal() as db:
+        try:
+            logger.debug("Создана новая сессия базы данных")
+            yield db
+        except Exception as e:
+            logger.error(f"Ошибка при работе с базой данных: {e}")
+            raise
 
-# Функция для получения сессии
-async def get_db() -> AsyncSession:
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
-# Функция для инициализации базы данных
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database initialized")
+    """Инициализация базы данных: создание всех таблиц."""
+    try:
+        async with engine.begin() as conn:
+            logger.info("Создание таблиц в базе данных")
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("Таблицы успешно созданы")
+    except Exception as e:
+        logger.error(f"Ошибка при создании таблиц: {e}")
+        raise
 
-
-# Функция для завершения работы базы данных
-async def shutdown_db():
-    await engine.dispose()
+async def close_db():
+    """Закрытие соединения с базой данных."""
+    try:
+        await engine.dispose()
+        logger.info("Соединение с базой данных закрыто")
+    except Exception as e:
+        logger.error(f"Ошибка при закрытии соединения: {e}")
+        raise

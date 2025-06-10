@@ -1,24 +1,17 @@
-from fastapi import FastAPI, Depends, HTTPException, APIRouter
+from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import date
 import logging
 import traceback
 import sys
 from app.models import CurrencyRate
-from app.database import init_db, shutdown_db, get_db
+from app.database import init_db, get_db, close_db
 from app.crud import get_rates_by_date, save_rates
 from app.schemas import CurrencyRateSchema
 from app.utils import fetch_cbr_rates
 from dotenv import load_dotenv
 
 load_dotenv()
-
-router = APIRouter()
-
-@router.post("/currency-rates/", response_model=CurrencyRateSchema)
-async def create_rate(rate: CurrencyRateSchema, db: AsyncSession = Depends(get_db)):
-    return await CurrencyRate.create_currency_rate(db, rate)
-
 
 
 
@@ -27,8 +20,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-app.include_router(router)  # Подключи роутер
 
+
+@app.post("/currency-rates/", response_model=CurrencyRateSchema)
+async def create_rate(rate: CurrencyRateSchema, db: AsyncSession = Depends(get_db)):
+    return await CurrencyRate.create_currency_rate(db, rate)
+
+
+@app.get("/currency-rates/latest/")
+async def get_latest_rates(db: AsyncSession = Depends(get_db)):
+    """Возвращает последние курсы валют."""
+    logger.info("Получение последних курсов валют")
+    return await CurrencyRate.get_latest_rates(db)
 
 #обработчик ошибок для отладки
 @app.exception_handler(Exception)
@@ -43,23 +46,25 @@ async def debug_exception_handler(request, exc):
 
 
 @app.on_event("startup")
-async def startup():
+async def on_startup():
+    """Создание таблиц в базе данных при старте приложения."""
     try:
+        logger.info("Приложение запускается, инициализация базы данных")
         await init_db()
-        logger.info("Service started successfully")
     except Exception as e:
-        logger.error(f"Startup failed: {str(e)}")
+        logger.error(f"Ошибка при запуске приложения: {e}")
         raise
 
 
 @app.on_event("shutdown")
-async def shutdown():
+async def on_shutdown():
+    """Закрытие соединения с базой данных при завершении работы приложения."""
     try:
-        await shutdown_db()
-        logger.info("Service stopped gracefully")
+        logger.info("Приложение завершает работу, закрытие базы данных")
+        await close_db()
     except Exception as e:
-        logger.error(f"Shutdown error: {str(e)}")
-
+        logger.error(f"Ошибка при завершении работы: {e}")
+        raise
 
 @app.get("/exchange-rates", response_model=list[CurrencyRateSchema])
 async def get_exchange_rates(db: AsyncSession = Depends(get_db)):
@@ -98,8 +103,12 @@ async def get_exchange_rates(db: AsyncSession = Depends(get_db)):
             detail=f"Internal Server Error: {str(e)}"
         )
 
+
 @app.post("/pull")
 async def pullHandle():
     logger.info("Кто-то дернул ручку!")
     return {"message": "Ручка дёрнута!"}
+
+
+
 #BD - MyStrngPsswrd1

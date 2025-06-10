@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, Date, String, Numeric
+from sqlalchemy import Column, Integer, Date, String, Numeric, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import Base
+from app.schemas import CurrencyRateSchema
 
 
 class CurrencyRate(Base):
@@ -35,3 +36,20 @@ class CurrencyRate(Base):
             .where(cls.currency_code == currency_rate_dict['currency_code'])
         )
         return result.scalar_one_or_none()
+
+    @classmethod
+    async def get_latest_rates(cls, db: AsyncSession):
+        """Возвращает последние курсы валют."""
+        subquery = (
+            select(cls.currency_code, func.max(cls.date).label('max_date'))
+            .group_by(cls.currency_code)
+            .subquery()
+        )
+
+        query = (
+            select(cls)
+            .join(subquery, (cls.currency_code == subquery.c.currency_code) & (cls.date == subquery.c.max_date))
+        )
+
+        result = await db.execute(query)
+        return result.scalars().all()
