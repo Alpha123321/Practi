@@ -1,20 +1,25 @@
-
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from datetime import date
 import logging
 import traceback
 import sys
-
+from app.models import CurrencyRate
 from app.database import init_db, shutdown_db, get_db
 from app.crud import get_rates_by_date, save_rates
 from app.schemas import CurrencyRateSchema
 from app.utils import fetch_cbr_rates
-
 from dotenv import load_dotenv
 
 load_dotenv()
+
+router = APIRouter()
+
+@router.post("/currency-rates/", response_model=CurrencyRateSchema)
+async def create_rate(rate: CurrencyRateSchema, db: AsyncSession = Depends(get_db)):
+    return await CurrencyRate.create_currency_rate(db, rate)
+
+
 
 
 #логирование
@@ -22,6 +27,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+app.include_router(router)  # Подключи роутер
 
 
 #обработчик ошибок для отладки

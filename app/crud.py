@@ -1,4 +1,5 @@
 from sqlalchemy import select
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import CurrencyRate
 from datetime import date

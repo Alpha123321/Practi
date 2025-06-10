@@ -1,10 +1,9 @@
 from pydantic import BaseModel, field_validator
-from datetime import date as DateType
+from datetime import date
 import re
 
-
 class CurrencyRateSchema(BaseModel):
-    date: DateType
+    date: date
     currency_code: str
     name: str
     rate: float
