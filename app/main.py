@@ -12,6 +12,11 @@ from app.crud import get_rates_by_date, save_rates
 from app.schemas import CurrencyRateSchema
 from app.utils import fetch_cbr_rates
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
 #логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
