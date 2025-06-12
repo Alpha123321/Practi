@@ -1,114 +1,87 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import date
-import logging
-import traceback
-import sys
+from sqlalchemy.future import select
 from app.models import CurrencyRate
-from app.database import init_db, get_db, close_db
-from app.crud import get_rates_by_date, save_rates
+from app.database import get_db
 from app.schemas import CurrencyRateSchema
-from app.utils import fetch_cbr_rates
-from dotenv import load_dotenv
-
-load_dotenv()
-
-
-
-#логирование
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# Получить все курсы
+@app.get("/currency-rates/", response_model=List[CurrencyRateSchema])
+async def get_all_rates(db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(select(CurrencyRate).order_by(CurrencyRate.date.desc()))
+        rates = result.scalars().all()
+        return rates
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/currency-rates/", response_model=CurrencyRateSchema)
-async def create_rate(rate: CurrencyRateSchema, db: AsyncSession = Depends(get_db)):
-    return await CurrencyRate.create_currency_rate(db, rate)
+# Получить курс по id
+@app.get("/currency-rates/{rate_id}", response_model=CurrencyRateSchema)
+async def get_rate_by_id(rate_id: int, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(select(CurrencyRate).where(CurrencyRate.id == rate_id))
+        rate = result.scalars().first()
+        if not rate:
+            raise HTTPException(status_code=404, detail="Rate not found")
+        return rate
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.get("/currency-rates/latest/")
+# Получить последние 10 курсов
+@app.get("/currency-rates/latest/", response_model=List[CurrencyRateSchema])
 async def get_latest_rates(db: AsyncSession = Depends(get_db)):
-    """Возвращает последние курсы валют."""
-    logger.info("Получение последних курсов валют")
-    return await CurrencyRate.get_latest_rates(db)
-
-#обработчик ошибок для отладки
-@app.exception_handler(Exception)
-async def debug_exception_handler(request, exc):
-    exc_type, exc_value, exc_tb = sys.exc_info()
-    tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-    logger.error(f"Unhandled exception: {tb}")
-    return HTTPException(
-        status_code=500,
-        detail=f"Internal Server Error: {str(exc)}"
-    )
-
-
-@app.on_event("startup")
-async def on_startup():
-    """Создание таблиц в базе данных при старте приложения."""
     try:
-        logger.info("Приложение запускается, инициализация базы данных")
-        await init_db()
+        result = await db.execute(select(CurrencyRate).order_by(CurrencyRate.date.desc()).limit(10))
+        rates = result.scalars().all()
+        return rates
     except Exception as e:
-        logger.error(f"Ошибка при запуске приложения: {e}")
-        raise
+        raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    """Закрытие соединения с базой данных при завершении работы приложения."""
+# Получить курсы по коду валюты
+@app.get("/currency-rates/currency/{currency_code}", response_model=List[CurrencyRateSchema])
+async def get_rates_by_code(currency_code: str, db: AsyncSession = Depends(get_db)):
     try:
-        logger.info("Приложение завершает работу, закрытие базы данных")
-        await close_db()
-    except Exception as e:
-        logger.error(f"Ошибка при завершении работы: {e}")
-        raise
-
-@app.get("/exchange-rates", response_model=list[CurrencyRateSchema])
-async def get_exchange_rates(db: AsyncSession = Depends(get_db)):
-    today = date.today()
-    logger.info(f"Request for exchange rates on {today}")
-
-    try:
-        # 1. Проверяем наличие данных в БД
-        existing_rates = await get_rates_by_date(db, today)
-        if existing_rates:
-            logger.info(f"Returning {len(existing_rates)} rates from database")
-            return existing_rates
-
-        logger.info("No rates in DB, fetching from CBR")
-
-        # 2. просим данные у цб
-        new_rates = await fetch_cbr_rates(today)
-        if not new_rates:
-            logger.warning("No rates received from CBR")
-            return []
-
-        logger.info(f"Received {len(new_rates)} rates from CBR")
-
-        # сохр в бд
-        saved_count = await save_rates(db, new_rates)
-        logger.info(f"Saved {saved_count} new rates to database")
-
-        # выводим из бд
-        db_rates = await get_rates_by_date(db, today)
-        return db_rates if db_rates else []
-
-    except Exception as e:
-        logger.exception("Unhandled error in get_exchange_rates")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal Server Error: {str(e)}"
+        result = await db.execute(
+            select(CurrencyRate)
+            .where(CurrencyRate.currency_code == currency_code.upper())
+            .order_by(CurrencyRate.date.desc())
         )
+        rates = result.scalars().all()
+        if not rates:
+            raise HTTPException(status_code=404, detail="No rates found for this currency code")
+        return rates
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
+# Добавить новый курс
+@app.post("/currency-rates/", response_model=CurrencyRateSchema)
+async def create_currency_rate(rate: CurrencyRateSchema, db: AsyncSession = Depends(get_db)):
+    try:
+        new_rate = CurrencyRate(**rate.model_dump())
+        db.add(new_rate)
+        await db.commit()
+        await db.refresh(new_rate)
+        return new_rate
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
-@app.post("/pull")
-async def pullHandle():
-    logger.info("Кто-то дернул ручку!")
-    return {"message": "Ручка дёрнута!"}
-
-
+# Удалить курс по id
+@app.delete("/currency-rates/{rate_id}")
+async def delete_currency_rate(rate_id: int, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(select(CurrencyRate).where(CurrencyRate.id == rate_id))
+        rate = result.scalars().first()
+        if not rate:
+            raise HTTPException(status_code=404, detail="Rate not found")
+        await db.delete(rate)
+        await db.commit()
+        return {"message": "Rate deleted"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 #BD - MyStrngPsswrd1
