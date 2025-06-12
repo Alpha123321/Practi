@@ -17,4 +17,4 @@ class CurrencyRateSchema(BaseModel):
         return v
 
     class Config:
-        from_attributes = True
+        orm_mode = True

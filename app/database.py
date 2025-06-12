@@ -4,14 +4,11 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 import logging
 
-from app.models import CurrencyRate
-
 logger = logging.getLogger(__name__)
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Добавляем настройки для лучшей обработки соединений
 engine = create_async_engine(
     DATABASE_URL,
     future=True,
@@ -27,7 +24,6 @@ AsyncSessionLocal = sessionmaker(
 )
 
 Base = declarative_base()
-
 
 async def get_db():
     async with AsyncSessionLocal() as session:

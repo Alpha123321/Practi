@@ -3,36 +3,51 @@ import aiohttp
 from fastapi import HTTPException
 from lxml import etree
 import logging
+import xml.etree.ElementTree as ET
+
 
 logger = logging.getLogger(__name__)
 
-async def fetch_cbr_rates(target_date: date) -> list:
+
+async def fetch_cbr_rates(target_date: date) -> list[dict]:
     url = f"https://www.cbr.ru/scripts/XML_daily.asp?date_req={target_date.strftime('%d/%m/%Y')}"
-    headers = {"User-Agent": "FastAPI Currency Service"}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status != 200:
+                return []
+
+            text = await response.text()
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                response.raise_for_status()
-                # Упрощенная обработка кодировки
-                xml_content = await response.text(encoding='windows-1251')
-                return parse_xml(xml_content, target_date)
-    except aiohttp.ClientError as e:
-        logger.error(f"CBR request failed: {str(e)}")
-        raise HTTPException(
-            status_code=503,
-            detail="CBR service unavailable"
-        ) from e
-    except Exception as e:
-        logger.error(f"Error fetching rates: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to fetch currency rates"
-        ) from e
+        root = ET.fromstring(text)
+        date_str = root.attrib.get('Date')
+        cbr_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+    except Exception:
+        return []
 
+    rates = []
+    for valute in root.findall('Valute'):
+        try:
+            char_code = valute.find('CharCode').text
+            name = valute.find('Name').text
+            nominal = int(valute.find('Nominal').text)
+            rate_str = valute.find('Value').text.replace(',', '.')
+            rate = float(rate_str)
+        except Exception:
+            continue
+
+        rates.append({
+            'date': cbr_date,
+            'currency_code': char_code,
+            'name': name,
+            'rate': rate,
+            'nominal': nominal,
+        })
+
+    return rates
 def parse_xml(xml_content: str, fallback_date: date) -> list:
     try:
-        # Упрощенный парсинг без двойного кодирования
         root = etree.fromstring(xml_content.encode('windows-1251'))
         rates = []
 

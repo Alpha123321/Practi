@@ -10,6 +10,7 @@ class CurrencyRate(Base):
     name = Column(String(100))
     rate = Column(Numeric(12, 6))
     nominal = Column(Integer)
+
     __table_args__ = (
         Index('idx_date_currency', 'date', 'currency_code', unique=True),
     )
