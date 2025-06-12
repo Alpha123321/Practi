@@ -4,6 +4,8 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 import logging
 
+from app.models import CurrencyRate
+
 logger = logging.getLogger(__name__)
 load_dotenv()
 
@@ -26,8 +28,6 @@ AsyncSessionLocal = sessionmaker(
 
 Base = declarative_base()
 
-# Явный импорт ВСЕХ моделей здесь!
-from app.models import CurrencyRate  # Важно!
 
 async def get_db():
     async with AsyncSessionLocal() as session:
