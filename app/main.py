@@ -1,87 +1,111 @@
-from fastapi import FastAPI, HTTPException, Depends
-from typing import List
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from app.models import CurrencyRate
-from app.database import get_db
+from datetime import date
+import logging
+import traceback
+
+from app.database import init_db, shutdown_db, get_db
+from app.crud import get_rates_by_date, save_rates
 from app.schemas import CurrencyRateSchema
+from app.utils import fetch_cbr_rates
 
-app = FastAPI()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Получить все курсы
-@app.get("/currency-rates/", response_model=List[CurrencyRateSchema])
-async def get_all_rates(db: AsyncSession = Depends(get_db)):
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     try:
-        result = await db.execute(select(CurrencyRate).order_by(CurrencyRate.date.desc()))
-        rates = result.scalars().all()
-        return rates
+        await init_db()
+        logger.info("Service started successfully")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Startup failed: {str(e)}")
+        raise
 
-# Получить курс по id
-@app.get("/currency-rates/{rate_id}", response_model=CurrencyRateSchema)
-async def get_rate_by_id(rate_id: int, db: AsyncSession = Depends(get_db)):
+    yield
+
+    # Shutdown
     try:
-        result = await db.execute(select(CurrencyRate).where(CurrencyRate.id == rate_id))
-        rate = result.scalars().first()
-        if not rate:
-            raise HTTPException(status_code=404, detail="Rate not found")
-        return rate
+        await shutdown_db()
+        logger.info("Service stopped gracefully")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Shutdown error: {str(e)}")
 
-# Получить последние 10 курсов
-@app.get("/currency-rates/latest/", response_model=List[CurrencyRateSchema])
-async def get_latest_rates(db: AsyncSession = Depends(get_db)):
+
+app = FastAPI(
+    title="Currency API",
+    description="Сервис для получения курсов валют ЦБ РФ",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+
+# Удаляем кастомный openapi.json endpoint - FastAPI создаст его автоматически
+
+@app.exception_handler(Exception)
+async def debug_exception_handler(request, exc):
+    logger.error(f"Unhandled exception: {traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error"}
+    )
+
+
+@app.get("/exchange-rates", response_model=list[CurrencyRateSchema])
+async def get_exchange_rates(db: AsyncSession = Depends(get_db)):
+    today = date.today()
+    logger.info(f"Request for exchange rates on {today}")
+
     try:
-        result = await db.execute(select(CurrencyRate).order_by(CurrencyRate.date.desc()).limit(10))
-        rates = result.scalars().all()
-        return rates
+        # 1. Проверяем наличие данных в БД
+        existing_rates = await get_rates_by_date(db, today)
+        if existing_rates:
+            logger.info(f"Returning {len(existing_rates)} rates from database")
+            return existing_rates
+
+        logger.info("No rates in DB, fetching from CBR")
+
+        # 2. Запрашиваем данные у ЦБ
+        new_rates = await fetch_cbr_rates(today)
+        if not new_rates:
+            logger.warning("No rates received from CBR")
+            raise HTTPException(
+                status_code=404,
+                detail="Currency rates not available"
+            )
+
+        logger.info(f"Received {len(new_rates)} rates from CBR")
+
+        # 3. Сохраняем в БД
+        saved_count = await save_rates(db, new_rates)
+        logger.info(f"Saved {saved_count} new rates to database")
+
+        # 4. Возвращаем данные из БД
+        db_rates = await get_rates_by_date(db, today)
+        if not db_rates:
+            logger.error("Saved rates not found in database")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to retrieve saved rates"
+            )
+
+        return db_rates
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Получить курсы по коду валюты
-@app.get("/currency-rates/currency/{currency_code}", response_model=List[CurrencyRateSchema])
-async def get_rates_by_code(currency_code: str, db: AsyncSession = Depends(get_db)):
-    try:
-        result = await db.execute(
-            select(CurrencyRate)
-            .where(CurrencyRate.currency_code == currency_code.upper())
-            .order_by(CurrencyRate.date.desc())
+        logger.exception("Unhandled error in get_exchange_rates")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
         )
-        rates = result.scalars().all()
-        if not rates:
-            raise HTTPException(status_code=404, detail="No rates found for this currency code")
-        return rates
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-# Добавить новый курс
-@app.post("/currency-rates/", response_model=CurrencyRateSchema)
-async def create_currency_rate(rate: CurrencyRateSchema, db: AsyncSession = Depends(get_db)):
-    try:
-        new_rate = CurrencyRate(**rate.model_dump())
-        db.add(new_rate)
-        await db.commit()
-        await db.refresh(new_rate)
-        return new_rate
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
 
-# Удалить курс по id
-@app.delete("/currency-rates/{rate_id}")
-async def delete_currency_rate(rate_id: int, db: AsyncSession = Depends(get_db)):
-    try:
-        result = await db.execute(select(CurrencyRate).where(CurrencyRate.id == rate_id))
-        rate = result.scalars().first()
-        if not rate:
-            raise HTTPException(status_code=404, detail="Rate not found")
-        await db.delete(rate)
-        await db.commit()
-        return {"message": "Rate deleted"}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/")
+async def root():
+    return {"message": "Currency API is running"}
 
 #BD - MyStrngPsswrd1
